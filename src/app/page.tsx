@@ -1,12 +1,34 @@
-export default function Home() {
+"use client"
+
+import { useState } from "react"
+import { Header } from "@/components/header"
+import { SubmitForm } from "@/components/submit-form"
+import { JobsList } from "@/components/jobs-list"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+
+export default function HomePage() {
+  const [refresh, setRefresh] = useState(0)
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-4">
-      <div className="text-center">
-        <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50">
-          Transcriptor de Videos
-        </h1>
-        <p className="mt-2 text-zinc-500 dark:text-zinc-400">En construcción</p>
-      </div>
-    </main>
+    <div className="min-h-screen">
+      <Header />
+      <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Nueva transcripción</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SubmitForm onJobCreated={() => setRefresh((r) => r + 1)} />
+          </CardContent>
+        </Card>
+
+        <section>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">
+            Trabajos recientes
+          </h2>
+          <JobsList refresh={refresh} />
+        </section>
+      </main>
+    </div>
   )
 }

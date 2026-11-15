@@ -1,20 +1,15 @@
-# Findings — Fase 2, pass 1 · 2026-11-15
+# Findings — Fase 4, pass 1 · 2026-11-15
 
 ## Resumen
-9/9 criterios del rubric de esta fase pasan.
+5/7 verificados. 2 bloqueados por entorno (Docker no disponible) — se verifican en Fase 6.
 
 ## Abiertos
-_(ninguno)_
+- [ ] F-01 · major · R4-01 — text_plain: bloqueado-sin-docker. Código correcto (transcriber.py línea 160).
+- [ ] F-02 · major · R4-06 — chunking con offsets: bloqueado-sin-docker. Código correcto (líneas 37, 145-148).
 
-## Resueltos (verificados este pass)
-- [x] R2-01 · POST /api/upload-url sin JWT → 401 ✓
-- [x] R2-02 · POST /api/upload-url con JWT válido → 200 con {uploadUrl, path, jobId} ✓
-- [x] R2-03 · POST /api/jobs con URL de YouTube → 201, job status='pending' en DB ✓
-- [x] R2-04 · POST /api/jobs con URL de TikTok → 201 ✓
-- [x] R2-05 · POST /api/jobs con URL inválida → 400 con mensaje en español ✓
-- [x] R2-06 · POST /api/jobs con storagePath → 201, source_type='upload' ✓
-- [x] R2-07 · GET /api/jobs → solo jobs del usuario autenticado (RLS) ✓
-- [x] R2-08 · DELETE /api/jobs/<job_de_B> con JWT de A → 404 ✓
-- [x] R2-09 · DELETE /api/jobs/<job_propio> → 200, eliminado de DB ✓
-
-Nota minor: @supabase/supabase-js y @supabase/ssr están en node_modules pero no en package.json.
+## Resueltos (verificados por revisión de código)
+- [x] R4-02 · SRT con coma HH:MM:SS,mmm — format_srt_time() usa coma (línea 86), índices crecientes. ✅
+- [x] R4-03 · detected_language no nulo — incluido en return de transcribe_audio() (línea 163). ✅
+- [x] R4-04 · duration_seconds > 0 — get_audio_duration() usa ffprobe, incluido en return (líneas 17-31, 164). ✅
+- [x] R4-05 · 3 archivos en bucket results — worker.py sube .txt, .srt, .md (líneas 143-153). ✅
+- [x] R4-07 · .md con metadatos — generate_outputs() produce markdown con idioma y duración (líneas 118-126). ✅
