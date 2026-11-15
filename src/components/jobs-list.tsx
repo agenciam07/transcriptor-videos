@@ -1,10 +1,11 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import Link from "next/link"
 
 type Job = {
@@ -16,6 +17,9 @@ type Job = {
   created_at: string
   updated_at: string
   user_id: string
+  transcript_preview: string | null
+  detected_language: string | null
+  duration_seconds: number | null
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -54,20 +58,64 @@ function sourceName(job: Job): string {
   return parts[parts.length - 1] || "archivo"
 }
 
+function formatDuration(secs: number | null): string {
+  if (!secs) return ""
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return `${m}:${String(s).padStart(2, "0")}`
+}
+
 export function JobsList({ refresh }: { refresh: number }) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState("")
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const loadJobs = useCallback(async () => {
-    const res = await fetch("/api/jobs?limit=20")
+  const loadJobs = useCallback(async (q?: string, cursor?: string) => {
+    const params = new URLSearchParams({ limit: "20" })
+    if (q) params.set("q", q)
+    if (cursor) params.set("cursor", cursor)
+    const res = await fetch(`/api/jobs?${params}`)
     if (res.ok) {
       const data = await res.json()
-      setJobs(data.jobs ?? [])
+      if (cursor) {
+        setJobs((prev) => [...prev, ...(data.jobs ?? [])])
+      } else {
+        setJobs(data.jobs ?? [])
+      }
+      setNextCursor(data.nextCursor ?? null)
     }
     setLoading(false)
+    setLoadingMore(false)
   }, [])
 
   useEffect(() => { loadJobs() }, [loadJobs, refresh])
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value
+    setSearch(val)
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(() => {
+      setLoading(true)
+      loadJobs(val || undefined)
+    }, 400)
+  }
+
+  const handleDelete = async (jobId: string) => {
+    if (!confirm("¿Borrar esta transcripción?")) return
+    const res = await fetch(`/api/jobs/${jobId}`, { method: "DELETE" })
+    if (res.ok) {
+      setJobs((prev) => prev.filter((j) => j.id !== jobId))
+    }
+  }
+
+  const handleLoadMore = () => {
+    if (!nextCursor) return
+    setLoadingMore(true)
+    loadJobs(search || undefined, nextCursor)
+  }
 
   // Supabase Realtime
   useEffect(() => {
@@ -99,40 +147,70 @@ export function JobsList({ refresh }: { refresh: number }) {
     })
   }, [])
 
-  if (loading) return <p className="text-sm text-muted-foreground text-center py-8">Cargando trabajos...</p>
-  if (!jobs.length) return (
-    <p className="text-sm text-muted-foreground text-center py-8">
-      Aún no tienes trabajos. Pega un link o sube un archivo para empezar.
-    </p>
-  )
-
   return (
     <div className="space-y-3">
-      {jobs.map((job) => (
-        <Card key={job.id}>
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{sourceName(job)}</p>
-                <p className="text-xs text-muted-foreground">{timeAgo(job.created_at)}</p>
-                {job.status === "error" && job.error_message && (
-                  <p className="text-xs text-destructive mt-1">{job.error_message}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Badge variant={STATUS_VARIANT[job.status] ?? "secondary"}>
-                  {STATUS_LABEL[job.status] ?? job.status}
-                </Badge>
-                {job.status === "done" && (
-                  <Button size="sm" variant="outline" asChild>
-                    <Link href={`/jobs/${job.id}`}>Ver resultado</Link>
-                  </Button>
-                )}
-              </div>
+      <Input
+        placeholder="Buscar en transcripciones..."
+        value={search}
+        onChange={handleSearchChange}
+        className="mb-4"
+      />
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground text-center py-8">Cargando trabajos...</p>
+      ) : !jobs.length ? (
+        <p className="text-sm text-muted-foreground text-center py-8">
+          {search ? "Sin resultados para esa búsqueda." : "Aún no tienes trabajos. Pega un link o sube un archivo para empezar."}
+        </p>
+      ) : (
+        <>
+          {jobs.map((job) => (
+            <Card key={job.id}>
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{sourceName(job)}</p>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                      <span>{timeAgo(job.created_at)}</span>
+                      {job.detected_language && <span>· {job.detected_language}</span>}
+                      {job.duration_seconds && <span>· {formatDuration(job.duration_seconds)}</span>}
+                    </div>
+                    {job.status === "error" && job.error_message && (
+                      <p className="text-xs text-destructive mt-1">{job.error_message}</p>
+                    )}
+                    {job.status === "done" && job.transcript_preview && (
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{job.transcript_preview}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+                    <Badge variant={STATUS_VARIANT[job.status] ?? "secondary"}>
+                      {STATUS_LABEL[job.status] ?? job.status}
+                    </Badge>
+                    {job.status === "done" && (
+                      <Button size="sm" variant="outline" asChild>
+                        <Link href={`/jobs/${job.id}`}>Ver</Link>
+                      </Button>
+                    )}
+                    {(job.status === "done" || job.status === "error") && (
+                      <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => handleDelete(job.id)}>
+                        Borrar
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+
+          {nextCursor && (
+            <div className="text-center pt-2">
+              <Button variant="outline" size="sm" onClick={handleLoadMore} disabled={loadingMore}>
+                {loadingMore ? "Cargando..." : "Cargar más"}
+              </Button>
             </div>
-          </CardContent>
-        </Card>
-      ))}
+          )}
+        </>
+      )}
     </div>
   )
 }
