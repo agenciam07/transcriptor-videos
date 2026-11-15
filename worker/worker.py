@@ -133,11 +133,39 @@ def process_job(job: dict):
 
             upload_wav(job, wav_path)
 
-            # Fase 4: transcripción (se añade aquí)
+            # 4. Transcribir
             update_job_status(job_id, "transcribing")
-            # TODO: transcribe_audio(job, wav_path)
+            from transcriber import transcribe_audio
+            transcript_data = transcribe_audio(wav_path, job.get("language"))
 
-            log.info(f"Job {job_id} listo para transcripción")
+            # 5. Subir archivos de resultado a Storage bucket 'results'
+            user_id = job["user_id"]
+            for ext, content in [
+                ("txt", transcript_data["text_plain"]),
+                ("srt", transcript_data["text_srt"]),
+                ("md",  transcript_data["text_md"]),
+            ]:
+                path = f"{user_id}/{job_id}/transcript.{ext}"
+                supabase.storage.from_("results").upload(
+                    path,
+                    content.encode("utf-8"),
+                    file_options={"content-type": "text/plain; charset=utf-8", "upsert": "true"},
+                )
+
+            # 6. Insertar en tabla transcripts
+            supabase.table("transcripts").insert({
+                "job_id": job_id,
+                "user_id": user_id,
+                "text_plain": transcript_data["text_plain"],
+                "text_srt": transcript_data["text_srt"],
+                "text_md": transcript_data["text_md"],
+                "detected_language": transcript_data["detected_language"],
+                "duration_seconds": transcript_data["duration_seconds"],
+            }).execute()
+
+            # 7. Marcar job como done
+            update_job_status(job_id, "done")
+            log.info(f"Job {job_id} completado — {transcript_data['duration_seconds']}s, idioma: {transcript_data['detected_language']}")
 
         except WorkerError as e:
             log.error(f"Job {job_id} falló: {e}")
