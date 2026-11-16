@@ -36,14 +36,20 @@ export function JobResultClient({ id }: { id: string }) {
     toast.success("Texto copiado")
   }
 
-  async function handleDownload(format: "txt" | "srt" | "md") {
-    const res = await fetch(`/api/jobs/${id}/download?format=${format}`)
-    if (!res.ok) { toast.error("Error al obtener el archivo"); return }
-    const { url } = await res.json()
+  function handleDownload(format: "txt" | "srt" | "md") {
+    if (!transcript) return
+    const text = format === "txt" ? transcript.text_plain :
+                 format === "srt" ? transcript.text_srt : transcript.text_md
+    if (!text) { toast.error("No hay contenido para descargar"); return }
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
     a.download = `transcripcion.${format}`
+    document.body.appendChild(a)
     a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   const currentText = !transcript ? "" :
