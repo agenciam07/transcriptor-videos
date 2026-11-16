@@ -5,6 +5,7 @@ import subprocess
 import base64
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from supabase import create_client
@@ -23,6 +24,32 @@ log = logging.getLogger(__name__)
 
 class WorkerError(Exception):
     """Error con mensaje en español para mostrar al usuario."""
+
+
+# Misma lista que src/lib/validators.ts. El worker vuelve a validar porque descarga
+# con service_role: no debe confiar ciegamente en lo que haya en la tabla jobs.
+ALLOWED_HOSTS = {
+    "tiktok.com", "www.tiktok.com", "vm.tiktok.com",
+    "instagram.com", "www.instagram.com",
+    "facebook.com", "www.facebook.com", "fb.watch",
+    "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be",
+}
+
+
+def validate_job_source(job: dict):
+    if job["source_type"] == "link":
+        parsed = urlparse(job["source_url"])
+        if parsed.scheme not in ("http", "https") or parsed.hostname not in ALLOWED_HOSTS:
+            raise WorkerError("URL no válida. Solo se aceptan links de TikTok, Instagram, Facebook o YouTube.")
+    elif job["source_type"] == "upload":
+        parts = job["source_url"].split("/")
+        if (
+            len(parts) != 3
+            or parts[0] != job["user_id"]
+            or parts[1] != job["id"]
+            or parts[2] in ("", ".", "..")
+        ):
+            raise WorkerError("El archivo subido no es válido.")
 
 
 def claim_next_job():
@@ -51,7 +78,7 @@ def _map_ytdlp_error(stderr: str) -> str:
 def download_video(job: dict, tmp_dir: str) -> Path:
     if job["source_type"] == "link":
         url = job["source_url"]
-        cmd = ["yt-dlp", "-o", f"{tmp_dir}/video.%(ext)s", "--no-playlist", url]
+        cmd = ["yt-dlp", "-o", f"{tmp_dir}/video.%(ext)s", "--no-playlist", "--", url]
 
         cookies_b64 = os.environ.get("YT_DLP_COOKIES_B64")
         if cookies_b64:
@@ -78,8 +105,9 @@ def download_video(job: dict, tmp_dir: str) -> Path:
         log.info(f"Descargando desde Storage: {storage_path}")
         try:
             data = supabase.storage.from_("media").download(storage_path)
-        except Exception as e:
-            raise WorkerError(f"Error al acceder al archivo subido: {e}")
+        except Exception:
+            log.exception(f"No se pudo descargar {storage_path} de Storage")
+            raise WorkerError("No se pudo acceder al archivo subido. Vuelve a subirlo.")
 
         # Detectar extensión del path
         ext = Path(storage_path).suffix or ".bin"
@@ -124,6 +152,7 @@ def process_job(job: dict):
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         try:
+            validate_job_source(job)
             update_job_status(job_id, "downloading")
             video_path = download_video(job, tmp_dir)
 
@@ -152,8 +181,8 @@ def process_job(job: dict):
                     file_options={"content-type": "text/plain; charset=utf-8", "upsert": "true"},
                 )
 
-            # 6. Insertar en tabla transcripts
-            supabase.table("transcripts").insert({
+            # 6. Guardar en tabla transcripts (upsert: si el job se reintenta, no se duplica)
+            supabase.table("transcripts").upsert({
                 "job_id": job_id,
                 "user_id": user_id,
                 "text_plain": transcript_data["text_plain"],
@@ -161,7 +190,7 @@ def process_job(job: dict):
                 "text_md": transcript_data["text_md"],
                 "detected_language": transcript_data["detected_language"],
                 "duration_seconds": transcript_data["duration_seconds"],
-            }).execute()
+            }, on_conflict="job_id").execute()
 
             # 7. Marcar job como done
             update_job_status(job_id, "done")

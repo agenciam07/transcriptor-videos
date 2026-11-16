@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback, useRef } from "react"
+import type { RealtimeChannel } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -65,6 +66,22 @@ function formatDuration(secs: number | null): string {
   return `${m}:${String(s).padStart(2, "0")}`
 }
 
+type JobsResponse = { jobs: Job[]; nextCursor: string | null }
+
+async function fetchJobs(q?: string, cursor?: string): Promise<JobsResponse | null> {
+  const params = new URLSearchParams({ limit: "20" })
+  if (q) params.set("q", q)
+  if (cursor) params.set("cursor", cursor)
+  try {
+    const res = await fetch(`/api/jobs?${params}`)
+    if (!res.ok) return null
+    const data = await res.json()
+    return { jobs: data.jobs ?? [], nextCursor: data.nextCursor ?? null }
+  } catch {
+    return null
+  }
+}
+
 export function JobsList({ refresh }: { refresh: number }) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
@@ -73,25 +90,26 @@ export function JobsList({ refresh }: { refresh: number }) {
   const [loadingMore, setLoadingMore] = useState(false)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const loadJobs = useCallback(async (q?: string, cursor?: string) => {
-    const params = new URLSearchParams({ limit: "20" })
-    if (q) params.set("q", q)
-    if (cursor) params.set("cursor", cursor)
-    const res = await fetch(`/api/jobs?${params}`)
-    if (res.ok) {
-      const data = await res.json()
-      if (cursor) {
-        setJobs((prev) => [...prev, ...(data.jobs ?? [])])
-      } else {
-        setJobs(data.jobs ?? [])
-      }
-      setNextCursor(data.nextCursor ?? null)
+  const applyResult = useCallback((data: JobsResponse | null, append: boolean) => {
+    if (data) {
+      setJobs((prev) => (append ? [...prev, ...data.jobs] : data.jobs))
+      setNextCursor(data.nextCursor)
     }
     setLoading(false)
     setLoadingMore(false)
   }, [])
 
-  useEffect(() => { loadJobs() }, [loadJobs, refresh])
+  const loadJobs = useCallback(async (q?: string, cursor?: string) => {
+    applyResult(await fetchJobs(q, cursor), !!cursor)
+  }, [applyResult])
+
+  useEffect(() => {
+    let cancelled = false
+    fetchJobs().then((data) => {
+      if (!cancelled) applyResult(data, false)
+    })
+    return () => { cancelled = true }
+  }, [applyResult, refresh])
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value
@@ -120,20 +138,22 @@ export function JobsList({ refresh }: { refresh: number }) {
   // Supabase Realtime
   useEffect(() => {
     const supabase = createClient()
-    let userId: string
+    let channel: RealtimeChannel | null = null
+    let cancelled = false
 
     supabase.auth.getUser().then(({ data }) => {
-      userId = data.user?.id ?? ""
-      if (!userId) return
+      const userId = data.user?.id
+      if (!userId || cancelled) return
 
-      const channel = supabase
+      channel = supabase
         .channel("jobs-realtime")
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "jobs", filter: `user_id=eq.${userId}` },
           (payload) => {
             if (payload.eventType === "INSERT") {
-              setJobs((prev) => [payload.new as Job, ...prev])
+              const inserted = payload.new as Job
+              setJobs((prev) => prev.some((j) => j.id === inserted.id) ? prev : [inserted, ...prev])
             } else if (payload.eventType === "UPDATE") {
               setJobs((prev) => prev.map((j) => j.id === payload.new.id ? { ...j, ...(payload.new as Job) } : j))
             } else if (payload.eventType === "DELETE") {
@@ -142,9 +162,14 @@ export function JobsList({ refresh }: { refresh: number }) {
           }
         )
         .subscribe()
-
-      return () => { supabase.removeChannel(channel) }
     })
+
+    // Antes el cleanup se devolvía dentro de la promesa y nunca se ejecutaba,
+    // así que cada montaje dejaba un canal Realtime abierto.
+    return () => {
+      cancelled = true
+      if (channel) supabase.removeChannel(channel)
+    }
   }, [])
 
   return (

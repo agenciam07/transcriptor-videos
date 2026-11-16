@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useRef } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
@@ -20,7 +19,7 @@ export function SubmitForm({ onJobCreated }: { onJobCreated: () => void }) {
     const urls = links.split("\n").map((u) => u.trim()).filter(Boolean)
     if (!urls.length) return
     setLinkLoading(true)
-    let ok = 0, fail = 0
+    let ok = 0
     for (const url of urls) {
       try {
         const res = await fetch("/api/jobs", {
@@ -31,10 +30,9 @@ export function SubmitForm({ onJobCreated }: { onJobCreated: () => void }) {
         if (res.ok) { ok++ } else {
           const data = await res.json()
           toast.error(data.error ?? `Error con ${url}`)
-          fail++
         }
       } catch {
-        fail++
+        toast.error(`Error de conexión con ${url}`)
       }
     }
     setLinkLoading(false)

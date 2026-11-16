@@ -1,6 +1,7 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
+import { sanitizeFilename } from '@/lib/validators'
 
 export async function POST(request: Request) {
   const supabase = await createClient()
@@ -16,13 +17,15 @@ export async function POST(request: Request) {
     const body = await request.json()
     filename = body.filename
     contentType = body.contentType
-    if (!filename || !contentType) throw new Error('missing fields')
+    if (typeof filename !== 'string' || !filename || typeof contentType !== 'string' || !contentType) {
+      throw new Error('missing fields')
+    }
   } catch {
     return NextResponse.json({ error: 'Se requiere filename y contentType' }, { status: 400 })
   }
 
   const jobId = randomUUID()
-  const path = `${user.id}/${jobId}/${filename}`
+  const path = `${user.id}/${jobId}/${sanitizeFilename(filename)}`
 
   const service = await createServiceClient()
   const { data, error } = await service.storage
@@ -30,7 +33,8 @@ export async function POST(request: Request) {
     .createSignedUploadUrl(path)
 
   if (error || !data) {
-    return NextResponse.json({ error: error?.message ?? 'Error generando URL de subida' }, { status: 500 })
+    console.error('POST /api/upload-url', error)
+    return NextResponse.json({ error: 'Error generando URL de subida' }, { status: 500 })
   }
 
   return NextResponse.json({ uploadUrl: data.signedUrl, path, jobId })

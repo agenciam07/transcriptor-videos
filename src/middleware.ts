@@ -5,9 +5,10 @@ export async function middleware(request: NextRequest) {
   // /login y /auth/* son públicas: /auth/set-password recibe la sesión desde el enlace del correo
   // (en el hash de la URL, que el servidor no ve), así que no puede exigir una sesión previa.
   const { pathname } = request.nextUrl
-  if (pathname.startsWith("/login") || pathname.startsWith("/auth/")) {
+  if (pathname.startsWith("/auth/")) {
     return NextResponse.next()
   }
+  const isLogin = pathname.startsWith("/login")
 
   let supabaseResponse = NextResponse.next({ request })
 
@@ -31,6 +32,17 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
+
+  if (isLogin) {
+    // Con sesión iniciada, /login lleva directo a la app.
+    if (user) {
+      const url = request.nextUrl.clone()
+      url.pathname = "/"
+      url.search = ""
+      return NextResponse.redirect(url)
+    }
+    return supabaseResponse
+  }
 
   if (!user) {
     const url = request.nextUrl.clone()
