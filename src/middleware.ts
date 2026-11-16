@@ -2,7 +2,10 @@ import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 
 export async function middleware(request: NextRequest) {
-  if (request.nextUrl.pathname.startsWith("/login")) {
+  // /login y /auth/* son públicas: /auth/set-password recibe la sesión desde el enlace del correo
+  // (en el hash de la URL, que el servidor no ve), así que no puede exigir una sesión previa.
+  const { pathname } = request.nextUrl
+  if (pathname.startsWith("/login") || pathname.startsWith("/auth/")) {
     return NextResponse.next()
   }
 
