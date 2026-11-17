@@ -1,8 +1,6 @@
 "use client"
 
 import { useEffect, useState, useCallback, useRef } from "react"
-import type { RealtimeChannel } from "@supabase/supabase-js"
-import { createClient } from "@/lib/supabase/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -40,6 +38,9 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   done: "default",
   error: "destructive",
 }
+
+const ACTIVE_STATUSES = new Set(["pending", "downloading", "converting", "transcribing"])
+const POLL_MS = 4000
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
@@ -135,42 +136,25 @@ export function JobsList({ refresh }: { refresh: number }) {
     loadJobs(search || undefined, nextCursor)
   }
 
-  // Supabase Realtime
+  // Actualización automática por consulta periódica (antes era Supabase Realtime, que
+  // necesita un WebSocket directo a *.supabase.co y falla en redes que no llegan ahí).
+  // Solo consulta mientras haya trabajos en curso.
+  const hasActive = jobs.some((j) => ACTIVE_STATUSES.has(j.status))
+
   useEffect(() => {
-    const supabase = createClient()
-    let channel: RealtimeChannel | null = null
-    let cancelled = false
-
-    supabase.auth.getUser().then(({ data }) => {
-      const userId = data.user?.id
-      if (!userId || cancelled) return
-
-      channel = supabase
-        .channel("jobs-realtime")
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "jobs", filter: `user_id=eq.${userId}` },
-          (payload) => {
-            if (payload.eventType === "INSERT") {
-              const inserted = payload.new as Job
-              setJobs((prev) => prev.some((j) => j.id === inserted.id) ? prev : [inserted, ...prev])
-            } else if (payload.eventType === "UPDATE") {
-              setJobs((prev) => prev.map((j) => j.id === payload.new.id ? { ...j, ...(payload.new as Job) } : j))
-            } else if (payload.eventType === "DELETE") {
-              setJobs((prev) => prev.filter((j) => j.id !== payload.old.id))
-            }
-          }
-        )
-        .subscribe()
-    })
-
-    // Antes el cleanup se devolvía dentro de la promesa y nunca se ejecutaba,
-    // así que cada montaje dejaba un canal Realtime abierto.
-    return () => {
-      cancelled = true
-      if (channel) supabase.removeChannel(channel)
-    }
-  }, [])
+    if (!hasActive) return
+    const timer = setInterval(async () => {
+      const data = await fetchJobs(search || undefined)
+      if (!data) return
+      const fresh = new Map(data.jobs.map((j) => [j.id, j]))
+      setJobs((prev) => {
+        const known = new Set(prev.map((j) => j.id))
+        const added = data.jobs.filter((j) => !known.has(j.id))
+        return [...added, ...prev.map((j) => fresh.get(j.id) ?? j)]
+      })
+    }, POLL_MS)
+    return () => clearInterval(timer)
+  }, [hasActive, search])
 
   return (
     <div className="space-y-3">

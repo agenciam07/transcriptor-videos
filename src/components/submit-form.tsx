@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
+import { toProxyUrl } from "@/lib/supabase/client"
 
 export function SubmitForm({ onJobCreated }: { onJobCreated: () => void }) {
   const [links, setLinks] = useState("")
@@ -56,7 +57,7 @@ export function SubmitForm({ onJobCreated }: { onJobCreated: () => void }) {
       const { uploadUrl, path, jobId } = await urlRes.json()
 
       // 2. Subir directo a Supabase Storage
-      const uploadRes = await fetch(uploadUrl, {
+      const uploadRes = await fetch(toProxyUrl(uploadUrl), {
         method: "PUT",
         headers: { "Content-Type": file.type || "application/octet-stream" },
         body: file,
