@@ -70,6 +70,8 @@ def _map_ytdlp_error(stderr: str) -> str:
     s = stderr.lower()
     if any(x in s for x in ["video unavailable", "private video", "has been removed", "this video is unavailable"]):
         return "El video no está disponible (privado o eliminado)."
+    if any(x in s for x in ["not a bot", "sign in to confirm", "cookies", "429", "too many requests"]):
+        return "YouTube bloqueó la descarga desde el servidor. Inténtalo más tarde o con otro link."
     if any(x in s for x in ["geo", "blocked", "not available in your country", "who can watch"]):
         return "El sitio bloquea descargas desde servidores. Si es YouTube, considera usar cookies."
     return "Error al descargar el video. Inténtalo de nuevo."
@@ -78,7 +80,7 @@ def _map_ytdlp_error(stderr: str) -> str:
 def download_video(job: dict, tmp_dir: str) -> Path:
     if job["source_type"] == "link":
         url = job["source_url"]
-        cmd = ["yt-dlp", "-o", f"{tmp_dir}/video.%(ext)s", "--no-playlist", "--", url]
+        cmd = ["yt-dlp", "-o", f"{tmp_dir}/video.%(ext)s", "--no-playlist"]
 
         cookies_b64 = os.environ.get("YT_DLP_COOKIES_B64")
         if cookies_b64:
@@ -86,9 +88,15 @@ def download_video(job: dict, tmp_dir: str) -> Path:
             cookies_path.write_bytes(base64.b64decode(cookies_b64))
             cmd += ["--cookies", str(cookies_path)]
 
+        # "--" va al final: todo lo que sigue es la URL, nunca una opción.
+        cmd += ["--", url]
+
         log.info(f"Descargando link: {url}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
+            # Guardar el error real en los logs: sin esto solo vemos el mensaje genérico.
+            stderr_tail = "\n".join(result.stderr.strip().splitlines()[-8:])
+            log.error(f"yt-dlp falló (código {result.returncode}) para {url}:\n{stderr_tail}")
             msg = _map_ytdlp_error(result.stderr)
             raise WorkerError(msg)
 
