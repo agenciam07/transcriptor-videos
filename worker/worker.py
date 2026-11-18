@@ -80,7 +80,13 @@ def _map_ytdlp_error(stderr: str) -> str:
 def download_video(job: dict, tmp_dir: str) -> Path:
     if job["source_type"] == "link":
         url = job["source_url"]
-        cmd = ["yt-dlp", "-o", f"{tmp_dir}/video.%(ext)s", "--no-playlist"]
+        cmd = [
+            "yt-dlp",
+            "-o", f"{tmp_dir}/video.%(ext)s",
+            "--no-playlist",
+            "--format", "bestaudio/best",
+            "--extractor-args", "youtube:player_client=android,web",
+        ]
 
         cookies_b64 = os.environ.get("YT_DLP_COOKIES_B64")
         if cookies_b64:
