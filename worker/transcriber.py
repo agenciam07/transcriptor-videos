@@ -99,14 +99,28 @@ def generate_outputs(result: dict, duration_seconds: int) -> tuple:
     """Return (text_plain, text_srt, text_md)."""
     segments = result.get("segments", [])
     detected_language = result.get("language", "desconocido")
-    full_text = result.get("text", "").strip()
+
+    # Drop segments that are very likely silence/hallucination.
+    # Whisper returns no_speech_prob and avg_logprob in verbose_json; segments
+    # with high no_speech_prob or very low avg_logprob tend to be the classic
+    # Spanish religious hallucinations that appear at the end of fading audio.
+    filtered_segments = [
+        seg for seg in segments
+        if seg.get("no_speech_prob", 0) < 0.6
+        and seg.get("avg_logprob", 0) > -1.0
+    ]
+
+    if filtered_segments:
+        full_text = " ".join(seg.get("text", "").strip() for seg in filtered_segments).strip()
+    else:
+        full_text = result.get("text", "").strip()
 
     # --- plain text ---
     text_plain = full_text
 
     # --- SRT ---
     srt_lines = []
-    for i, seg in enumerate(segments, start=1):
+    for i, seg in enumerate(filtered_segments, start=1):
         start_ts = format_srt_time(seg.get("start", 0))
         end_ts = format_srt_time(seg.get("end", 0))
         text = seg.get("text", "").strip()
